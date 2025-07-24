@@ -169,10 +169,10 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
 
         for (int i = 0; i <= executionOptions.getMaxRetries(); i++) {
             try {
-                // 先校验连接是否有效，如果无效则重新建立连接
                 try {
-                    if (!connectionProvider.isConnectionValid()) {
-                        updateExecutor(!connectionProvider.isConnectionValid());
+                    // 只要报错失败过或者连接无效，则重新建立连接
+                    if (i > 0 || !connectionProvider.isConnectionValid()) {
+                        updateExecutor(true);
                     }
                 } catch (Exception exception) {
                     LOG.error("Attempt to update the JDBC statement executor failed.", exception);
@@ -182,9 +182,14 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
                 batchCount = 0;
                 break;
             } catch (SQLException e) {
-                LOG.error("JDBC executeBatch error, retry times = {}", i, e);
                 if (i >= executionOptions.getMaxRetries()) {
+                    LOG.error("JDBC executeBatch error, retry times = {}", i, e);
                     throw new IOException(e);
+                } else {
+                    LOG.warn(
+                            "JDBC executeBatch error, retry times = {}, msg = {}",
+                            i,
+                            e.getMessage());
                 }
                 try {
                     Thread.sleep(1000 * i);

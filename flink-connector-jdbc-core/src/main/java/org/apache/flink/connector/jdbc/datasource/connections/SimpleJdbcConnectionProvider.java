@@ -85,7 +85,6 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
             try (Statement statement = connection.createStatement()) {
                 statement.execute(dataSource.getConnectionTestQuery());
             }
-            LOG.info("Connection is valid.");
             return true;
         } catch (Exception e) {
             LOG.error("Failed to validate connection, msg:{}", e.getMessage());
@@ -135,8 +134,8 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         // 连接池大小
         config.setMaximumPoolSize(5); // 最大连接数
         config.setMinimumIdle(1); // 最小空闲连接
-        config.setIdleTimeout(300_000); // 空闲连接超时时间，单位毫秒（5分钟）
-        config.setMaxLifetime(480_000); // 连接最大存活时间，单位毫秒（8分钟）
+        config.setIdleTimeout(600_000); // 空闲连接超时时间，单位毫秒（10分钟）
+        config.setMaxLifetime(1800_000); // 连接最大存活时间，单位毫秒（30分钟）
         config.setConnectionTimeout(10_000); // 获取连接的超时时间，单位毫秒（10秒）
 
         config.setConnectionTestQuery("SELECT 1"); // 用于校验连接是否可用

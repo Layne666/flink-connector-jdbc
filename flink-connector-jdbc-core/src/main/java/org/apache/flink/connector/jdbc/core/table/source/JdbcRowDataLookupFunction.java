@@ -145,9 +145,9 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
     public Collection<RowData> lookup(RowData keyRow) {
         for (int retry = 0; retry <= maxRetryTimes; retry++) {
             try {
-                // 先校验连接是否有效，如果无效则重新建立连接
                 try {
-                    if (!connectionProvider.isConnectionValid()) {
+                    // 只要报错失败过或者连接无效，则重新建立连接
+                    if (retry > 0 || !connectionProvider.isConnectionValid()) {
                         statement.close();
                         connectionProvider.closeConnection();
                         establishConnectionAndStatement();
@@ -171,9 +171,14 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
                     return rows;
                 }
             } catch (SQLException e) {
-                LOG.error(String.format("JDBC executeBatch error, retry times = %d", retry), e);
                 if (retry >= maxRetryTimes) {
+                    LOG.error("JDBC executeBatch error, retry times = {}", retry, e);
                     throw new RuntimeException("Execution of JDBC statement failed.", e);
+                } else {
+                    LOG.warn(
+                            "JDBC executeBatch error, retry times = {}, msg = {}",
+                            retry,
+                            e.getMessage());
                 }
 
                 try {
