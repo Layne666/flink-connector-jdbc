@@ -19,21 +19,16 @@ package org.apache.flink.connector.jdbc.datasource.connections;
 
 import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.connector.jdbc.JdbcConnectionOptions;
-import org.apache.flink.util.Preconditions;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.annotation.Nonnull;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.Serializable;
-import java.sql.Connection;
-import java.sql.Driver;
-import java.sql.DriverManager;
-import java.sql.SQLException;
-import java.util.Enumeration;
-import java.util.Properties;
+import java.sql.*;
 
 /** Simple JDBC connection provider. */
 @NotThreadSafe
@@ -41,12 +36,12 @@ import java.util.Properties;
 public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Serializable {
 
     private static final Logger LOG = LoggerFactory.getLogger(SimpleJdbcConnectionProvider.class);
-
     private static final long serialVersionUID = 1L;
 
     private final JdbcConnectionOptions jdbcOptions;
 
     private transient Driver loadedDriver;
+    private transient HikariDataSource dataSource;
     private transient Connection connection;
 
     static {
@@ -63,90 +58,92 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
 
     public SimpleJdbcConnectionProvider(JdbcConnectionOptions jdbcOptions) {
         this.jdbcOptions = jdbcOptions;
+        LOG.info("Using custom HikariCP-based SimpleJdbcConnectionProvider.");
     }
 
     @Override
     public Connection getConnection() {
-        return connection;
-    }
-
-    @Nonnull
-    @Override
-    public Properties getProperties() {
-        return jdbcOptions.getProperties();
+        try {
+            return dataSource.getConnection();
+        } catch (Exception e) {
+            LOG.error("Failed to get connection from HikariCP", e);
+            return null;
+        }
     }
 
     @Override
     public boolean isConnectionValid() throws SQLException {
-        return connection != null
-                && !connection.isClosed()
-                && connection.isValid(jdbcOptions.getConnectionCheckTimeoutSeconds());
-    }
-
-    private Driver loadDriver(String driverName) throws SQLException, ClassNotFoundException {
-        Preconditions.checkNotNull(driverName);
-        Enumeration<Driver> drivers = DriverManager.getDrivers();
-        while (drivers.hasMoreElements()) {
-            Driver driver = drivers.nextElement();
-            if (driver.getClass().getName().equals(driverName)) {
-                return driver;
-            }
+        if (connection == null) {
+            LOG.info("Connection is null, so it is invalid.");
+            return false;
         }
-        // We could reach here for reasons:
-        // * Class loader hell of DriverManager(see JDK-8146872).
-        // * driver is not installed as a service provider.
-        Class<?> clazz =
-                Class.forName(driverName, true, Thread.currentThread().getContextClassLoader());
         try {
-            return (Driver) clazz.newInstance();
-        } catch (Exception ex) {
-            throw new SQLException("Fail to create driver of class " + driverName, ex);
+            if (connection.isClosed()) {
+                LOG.info("Connection is closed, so it is invalid.");
+                return false;
+            }
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(dataSource.getConnectionTestQuery());
+            }
+            LOG.info("Connection is valid.");
+            return true;
+        } catch (Exception e) {
+            LOG.error("Failed to validate connection, msg:{}", e.getMessage());
+            return false;
         }
-    }
-
-    private Driver getLoadedDriver() throws SQLException, ClassNotFoundException {
-        if (loadedDriver == null) {
-            loadedDriver = loadDriver(jdbcOptions.getDriverName());
-        }
-        return loadedDriver;
     }
 
     @Override
-    public Connection getOrEstablishConnection() throws SQLException, ClassNotFoundException {
-        if (isConnectionValid()) {
-            return connection;
+    public Connection getOrEstablishConnection() throws SQLException {
+        if (dataSource == null) {
+            LOG.info("Initializing HikariCP DataSource...");
+            dataSource =
+                    this.createHikariDataSource(
+                            jdbcOptions.getDbURL(),
+                            jdbcOptions.getUsername().orElse(null),
+                            jdbcOptions.getPassword().orElse(null));
         }
-        if (jdbcOptions.getDriverName() == null) {
-            connection = DriverManager.getConnection(jdbcOptions.getDbURL(), getProperties());
-        } else {
-            Driver driver = getLoadedDriver();
-            connection = driver.connect(jdbcOptions.getDbURL(), getProperties());
-            if (connection == null) {
-                // Throw same exception as DriverManager.getConnection when no driver found to match
-                // caller expectation.
-                throw new SQLException(
-                        "No suitable driver found for " + jdbcOptions.getDbURL(), "08001");
-            }
-        }
+        connection = dataSource.getConnection();
         return connection;
     }
 
     @Override
     public void closeConnection() {
-        if (connection != null) {
-            try {
+        try {
+            if (connection != null) {
                 connection.close();
-            } catch (SQLException e) {
-                LOG.warn("JDBC connection close failed.", e);
-            } finally {
-                connection = null;
             }
+        } catch (Exception e) {
+            LOG.warn("Failed to close connection", e);
         }
+        connection = null;
     }
 
     @Override
-    public Connection reestablishConnection() throws SQLException, ClassNotFoundException {
+    public Connection reestablishConnection() throws SQLException {
         closeConnection();
         return getOrEstablishConnection();
+    }
+
+    public HikariDataSource createHikariDataSource(String url, String user, String password) {
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(url);
+        config.setUsername(user);
+        config.setPassword(password);
+        config.setDriverClassName("com.mysql.cj.jdbc.Driver");
+
+        // 连接池大小
+        config.setMaximumPoolSize(5); // 最大连接数
+        config.setMinimumIdle(1); // 最小空闲连接
+        config.setIdleTimeout(300_000); // 空闲连接超时时间，单位毫秒（5分钟）
+        config.setMaxLifetime(480_000); // 连接最大存活时间，单位毫秒（8分钟）
+        config.setConnectionTimeout(10_000); // 获取连接的超时时间，单位毫秒（10秒）
+
+        config.setConnectionTestQuery("SELECT 1"); // 用于校验连接是否可用
+        config.setValidationTimeout(3_000); // 连接检测的超时时间（3秒）
+        config.setKeepaliveTime(60_000); // 每1分钟唤醒一次空闲连接，防止数据库断开
+
+        config.setPoolName("Flink-Hikari-Connection-Pool");
+        return new HikariDataSource(config);
     }
 }

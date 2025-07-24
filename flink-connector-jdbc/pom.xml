@@ -29,8 +29,8 @@ under the License.
 		<version>3.3.0</version>
 	</parent>
 
-	<artifactId>flink-connector-jdbc</artifactId>
-	<name>Flink : Connectors : JDBC : Shaded</name>
+	<artifactId>flink-connector-jdbc-hikari</artifactId>
+	<name>Flink : Connectors : JDBC HikariCP : Shaded</name>
 
 	<packaging>jar</packaging>
 

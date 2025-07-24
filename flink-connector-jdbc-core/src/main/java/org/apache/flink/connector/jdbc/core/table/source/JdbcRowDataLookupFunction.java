@@ -145,6 +145,19 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
     public Collection<RowData> lookup(RowData keyRow) {
         for (int retry = 0; retry <= maxRetryTimes; retry++) {
             try {
+                // 先校验连接是否有效，如果无效则重新建立连接
+                try {
+                    if (!connectionProvider.isConnectionValid()) {
+                        statement.close();
+                        connectionProvider.closeConnection();
+                        establishConnectionAndStatement();
+                    }
+                } catch (SQLException | ClassNotFoundException exception) {
+                    LOG.error(
+                            "JDBC connection is not valid, and reestablish connection failed",
+                            exception);
+                    throw new RuntimeException("Reestablish JDBC connection failed", exception);
+                }
                 statement.clearParameters();
                 statement = lookupKeyRowConverter.toExternal(keyRow, statement);
                 statement = setPredicateParams(statement);
@@ -161,19 +174,6 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
                 LOG.error(String.format("JDBC executeBatch error, retry times = %d", retry), e);
                 if (retry >= maxRetryTimes) {
                     throw new RuntimeException("Execution of JDBC statement failed.", e);
-                }
-
-                try {
-                    if (!connectionProvider.isConnectionValid()) {
-                        statement.close();
-                        connectionProvider.closeConnection();
-                        establishConnectionAndStatement();
-                    }
-                } catch (SQLException | ClassNotFoundException exception) {
-                    LOG.error(
-                            "JDBC connection is not valid, and reestablish connection failed",
-                            exception);
-                    throw new RuntimeException("Reestablish JDBC connection failed", exception);
                 }
 
                 try {
