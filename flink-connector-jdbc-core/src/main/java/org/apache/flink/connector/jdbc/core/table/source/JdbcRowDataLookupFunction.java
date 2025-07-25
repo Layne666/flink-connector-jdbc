@@ -32,6 +32,7 @@ import org.apache.flink.table.functions.LookupFunction;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -166,7 +167,8 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
 
                 try {
                     // SQLRecoverableException is the super exception to CommunicationsException.
-                    if (e instanceof SQLRecoverableException || !connectionProvider.isConnectionValid()) {
+                    if (e instanceof SQLRecoverableException
+                            || !connectionProvider.isConnectionValid()) {
                         statement.close();
                         connectionProvider.closeConnection();
                         establishConnectionAndStatement();

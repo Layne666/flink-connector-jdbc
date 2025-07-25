@@ -185,7 +185,8 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
                 }
                 try {
                     // SQLRecoverableException is the super exception to CommunicationsException.
-                    if (e instanceof SQLRecoverableException || !connectionProvider.isConnectionValid()) {
+                    if (e instanceof SQLRecoverableException
+                            || !connectionProvider.isConnectionValid()) {
                         updateExecutor(true);
                     }
                 } catch (Exception exception) {
