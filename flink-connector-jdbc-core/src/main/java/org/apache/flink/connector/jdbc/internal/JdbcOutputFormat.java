@@ -36,6 +36,7 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -169,19 +170,10 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
 
         for (int i = 0; i <= executionOptions.getMaxRetries(); i++) {
             try {
-                try {
-                    // 只要报错失败过或者连接无效，则重新建立连接
-                    if (i > 0 || !connectionProvider.isConnectionValid()) {
-                        updateExecutor(true);
-                    }
-                } catch (Exception exception) {
-                    LOG.error("Attempt to update the JDBC statement executor failed.", exception);
-                    throw new IOException("Unable to update JDBC statement executor", exception);
-                }
                 attemptFlush();
                 batchCount = 0;
                 break;
-            } catch (SQLException e) {
+            } catch (Exception e) {
                 if (i >= executionOptions.getMaxRetries()) {
                     LOG.error("JDBC executeBatch error, retry times = {}", i, e);
                     throw new IOException(e);
@@ -190,6 +182,15 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
                             "JDBC executeBatch error, retry times = {}, msg = {}",
                             i,
                             e.getMessage());
+                }
+                try {
+                    // SQLRecoverableException is the super exception to CommunicationsException.
+                    if (e instanceof SQLRecoverableException || !connectionProvider.isConnectionValid()) {
+                        updateExecutor(true);
+                    }
+                } catch (Exception exception) {
+                    LOG.error("Attempt to update the JDBC statement executor failed.", exception);
+                    throw new IOException("Unable to update JDBC statement executor", exception);
                 }
                 try {
                     Thread.sleep(1000 * i);

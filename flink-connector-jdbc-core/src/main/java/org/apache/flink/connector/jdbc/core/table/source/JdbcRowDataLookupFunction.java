@@ -32,7 +32,6 @@ import org.apache.flink.table.functions.LookupFunction;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.LogicalType;
 import org.apache.flink.table.types.logical.RowType;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,11 +40,8 @@ import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
+import java.sql.SQLRecoverableException;
+import java.util.*;
 import java.util.stream.Collectors;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
@@ -145,19 +141,6 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
     public Collection<RowData> lookup(RowData keyRow) {
         for (int retry = 0; retry <= maxRetryTimes; retry++) {
             try {
-                try {
-                    // 只要报错失败过或者连接无效，则重新建立连接
-                    if (retry > 0 || !connectionProvider.isConnectionValid()) {
-                        statement.close();
-                        connectionProvider.closeConnection();
-                        establishConnectionAndStatement();
-                    }
-                } catch (SQLException | ClassNotFoundException exception) {
-                    LOG.error(
-                            "JDBC connection is not valid, and reestablish connection failed",
-                            exception);
-                    throw new RuntimeException("Reestablish JDBC connection failed", exception);
-                }
                 statement.clearParameters();
                 statement = lookupKeyRowConverter.toExternal(keyRow, statement);
                 statement = setPredicateParams(statement);
@@ -170,7 +153,7 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
                     rows.trimToSize();
                     return rows;
                 }
-            } catch (SQLException e) {
+            } catch (Exception e) {
                 if (retry >= maxRetryTimes) {
                     LOG.error("JDBC executeBatch error, retry times = {}", retry, e);
                     throw new RuntimeException("Execution of JDBC statement failed.", e);
@@ -179,6 +162,20 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
                             "JDBC executeBatch error, retry times = {}, msg = {}",
                             retry,
                             e.getMessage());
+                }
+
+                try {
+                    // SQLRecoverableException is the super exception to CommunicationsException.
+                    if (e instanceof SQLRecoverableException || !connectionProvider.isConnectionValid()) {
+                        statement.close();
+                        connectionProvider.closeConnection();
+                        establishConnectionAndStatement();
+                    }
+                } catch (Exception exception) {
+                    LOG.error(
+                            "JDBC connection is not valid, and reestablish connection failed",
+                            exception);
+                    throw new RuntimeException("Reestablish JDBC connection failed", exception);
                 }
 
                 try {
