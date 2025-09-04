@@ -134,8 +134,8 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         // 连接池大小
         config.setMaximumPoolSize(5); // 最大连接数
         config.setMinimumIdle(1); // 最小空闲连接
-        config.setIdleTimeout(600_000); // 空闲连接超时时间，单位毫秒（10分钟）
-        config.setMaxLifetime(1800_000); // 连接最大存活时间，单位毫秒（30分钟）
+        config.setIdleTimeout(180_000); // 空闲连接超时时间，单位毫秒（3分钟）- 远小于 wait_timeout，避免用到僵尸连接
+        config.setMaxLifetime(300_000); // 连接最大存活时间，单位毫秒（5分钟） - 小于 MySQL wait_timeout（500s）
         config.setConnectionTimeout(10_000); // 获取连接的超时时间，单位毫秒（10秒）
 
         config.setConnectionTestQuery("SELECT 1"); // 用于校验连接是否可用
