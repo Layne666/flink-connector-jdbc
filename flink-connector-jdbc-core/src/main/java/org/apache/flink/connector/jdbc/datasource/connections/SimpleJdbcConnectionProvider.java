@@ -29,6 +29,8 @@ import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.Serializable;
 import java.sql.*;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Simple JDBC connection provider. */
 @NotThreadSafe
@@ -39,9 +41,11 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
     private static final long serialVersionUID = 1L;
 
     private final JdbcConnectionOptions jdbcOptions;
+    private final String connectionKey; // Unique key for this provider's specific DB connection.
 
-    private transient Driver loadedDriver;
-    private transient HikariDataSource dataSource;
+    // Use a static volatile field for the singleton DataSource
+    private static final Map<String, HikariDataSource> dataSourceMap = new ConcurrentHashMap<>();
+
     private transient Connection connection;
 
     static {
@@ -54,20 +58,59 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         // This could happen in JDK 8 but not above as driver loading has been
         // moved out of DriverManager's static initialization block since JDK 9.
         DriverManager.getDrivers();
+
+        // Add a single shutdown hook to cleanly close ALL connection pools when the JVM exits.
+        Runtime.getRuntime()
+                .addShutdownHook(
+                        new Thread(
+                                () -> {
+                                    synchronized (dataSourceMap) {
+                                        if (!dataSourceMap.isEmpty()) {
+                                            LOG.info(
+                                                    "Closing {} shared HikariCP DataSource(s) due to JVM shutdown...",
+                                                    dataSourceMap.size());
+                                            dataSourceMap.values().forEach(HikariDataSource::close);
+                                            dataSourceMap.clear();
+                                        }
+                                    }
+                                }));
     }
 
     public SimpleJdbcConnectionProvider(JdbcConnectionOptions jdbcOptions) {
         this.jdbcOptions = jdbcOptions;
         LOG.info("Using custom HikariCP-based SimpleJdbcConnectionProvider.");
+        // Create a unique key based on URL and username to identify a specific database connection.
+        this.connectionKey = jdbcOptions.getDbURL() + "::" + jdbcOptions.getUsername().orElse("");
+    }
+
+    private HikariDataSource getDataSource() {
+        // Use computeIfAbsent for thread-safe, efficient, and atomic initialization of the
+        // connection pool for a given key.
+        return dataSourceMap.computeIfAbsent(
+                this.connectionKey,
+                key -> {
+                    LOG.info("No existing HikariCP pool for key '{}'. Creating a new one.", key);
+                    return createHikariDataSource(
+                            jdbcOptions.getDbURL(),
+                            jdbcOptions.getUsername().orElse(null),
+                            jdbcOptions.getPassword().orElse(null));
+                });
     }
 
     @Override
     public Connection getConnection() {
         try {
-            return dataSource.getConnection();
+            return getDataSource().getConnection();
         } catch (Exception e) {
-            LOG.error("Failed to get connection from HikariCP", e);
-            return null;
+            LOG.error(
+                    "Failed to get connection from HikariCP pool for key '{}'",
+                    this.connectionKey,
+                    e);
+            throw new RuntimeException(
+                    "Failed to get connection from HikariCP pool for key '"
+                            + this.connectionKey
+                            + "'",
+                    e);
         }
     }
 
@@ -82,10 +125,13 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
                 LOG.info("Connection is closed, so it is invalid.");
                 return false;
             }
-            try (Statement statement = connection.createStatement()) {
-                statement.execute(dataSource.getConnectionTestQuery());
-            }
-            return true;
+            // try (Statement statement = connection.createStatement()) {
+            //     statement.execute(dataSource.getConnectionTestQuery());
+            // }
+            // return true;
+
+            // Use the connection's isValid method or a test query
+            return connection.isValid(3); // Check validity with a 3-seconds timeout
         } catch (Exception e) {
             LOG.error("Failed to validate connection, msg:{}", e.getMessage());
             return false;
@@ -94,32 +140,27 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
 
     @Override
     public Connection getOrEstablishConnection() throws SQLException {
-        if (dataSource == null) {
-            LOG.info("Initializing HikariCP DataSource...");
-            dataSource =
-                    this.createHikariDataSource(
-                            jdbcOptions.getDbURL(),
-                            jdbcOptions.getUsername().orElse(null),
-                            jdbcOptions.getPassword().orElse(null));
-        }
-        connection = dataSource.getConnection();
-        return connection;
+        this.connection = getDataSource().getConnection();
+        return this.connection;
     }
 
     @Override
     public void closeConnection() {
         try {
-            if (connection != null) {
+            if (connection != null && !connection.isClosed()) {
+                // Returns the connection to its specific shared pool.
                 connection.close();
             }
         } catch (Exception e) {
-            LOG.warn("Failed to close connection", e);
+            LOG.warn("Exception while closing connection (returning to pool)", e);
+        } finally {
+            connection = null;
         }
-        connection = null;
     }
 
     @Override
     public Connection reestablishConnection() throws SQLException {
+        // The pool handles re-establishment. Just get a (potentially new) connection.
         closeConnection();
         return getOrEstablishConnection();
     }
@@ -131,16 +172,21 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         config.setPassword(password);
         config.setDriverClassName("com.mysql.cj.jdbc.Driver");
 
-        // 连接池大小
-        config.setMaximumPoolSize(5); // 最大连接数
-        config.setMinimumIdle(1); // 最小空闲连接
-        config.setIdleTimeout(180_000); // 空闲连接超时时间，单位毫秒（3分钟）- 远小于 wait_timeout，避免用到僵尸连接
-        config.setMaxLifetime(300_000); // 连接最大存活时间，单位毫秒（5分钟） - 小于 MySQL wait_timeout（500s）
-        config.setConnectionTimeout(10_000); // 获取连接的超时时间，单位毫秒（10秒）
+        config.setMaximumPoolSize(100); // Maximum number of connections
+        config.setMinimumIdle(10); // Minimal idle connection
+        config.setIdleTimeout(
+                600_000); // Idle connection timeout, in milliseconds (10 minutes) - much less than
+        // wait_timeout, avoid using zombie connections
+        config.setMaxLifetime(
+                1800_000); // Maximum connection survival time in milliseconds (30 minutes) - less
+        // than MySQL wait_timeout
+        config.setConnectionTimeout(30_000); // Timeout to get connection (30 seconds)
 
-        config.setConnectionTestQuery("SELECT 1"); // 用于校验连接是否可用
-        config.setValidationTimeout(3_000); // 连接检测的超时时间（3秒）
-        config.setKeepaliveTime(60_000); // 每1分钟唤醒一次空闲连接，防止数据库断开
+        config.setConnectionTestQuery("SELECT 1"); // Queries for checksum and keep-alive are used
+        config.setValidationTimeout(5_000); // Timeout for connection detection (5 seconds)
+        config.setKeepaliveTime(
+                30_000); // Wake up idle connections every 30 seconds to prevent database
+        // disconnection
 
         config.setPoolName("Flink-Hikari-Connection-Pool");
         return new HikariDataSource(config);
