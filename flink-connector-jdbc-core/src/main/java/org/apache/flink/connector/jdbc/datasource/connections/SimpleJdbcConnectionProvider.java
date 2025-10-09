@@ -172,7 +172,7 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         config.setPassword(password);
         config.setDriverClassName("com.mysql.cj.jdbc.Driver");
 
-        config.setMaximumPoolSize(200); // Maximum number of connections
+        config.setMaximumPoolSize(1024); // Maximum number of connections
         config.setMinimumIdle(20); // Minimal idle connection
         config.setIdleTimeout(
                 600_000); // Idle connection timeout, in milliseconds (10 minutes) - much less than
