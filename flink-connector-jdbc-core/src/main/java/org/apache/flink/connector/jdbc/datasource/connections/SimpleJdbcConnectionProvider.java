@@ -125,13 +125,18 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
                 LOG.info("Connection is closed, so it is invalid.");
                 return false;
             }
-            // try (Statement statement = connection.createStatement()) {
-            //     statement.execute(dataSource.getConnectionTestQuery());
-            // }
-            // return true;
-
-            // Use the connection's isValid method or a test query
-            return connection.isValid(3); // Check validity with a 3-seconds timeout
+            // First quickly check whether the connection is alive
+            boolean valid = connection.isValid(3);// Check validity with a 3-seconds timeout
+            if (!valid) {
+                LOG.info("Connection is invalid.");
+                return false;
+            }
+            // If the connection is alive, check whether it is usable
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("SELECT 1");
+            }
+            LOG.info("Connection is valid.");
+            return true;
         } catch (Exception e) {
             LOG.error("Failed to validate connection, msg:{}", e.getMessage());
             return false;
