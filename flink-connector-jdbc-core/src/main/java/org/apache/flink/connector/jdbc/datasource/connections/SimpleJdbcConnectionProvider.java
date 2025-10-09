@@ -126,7 +126,7 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
                 return false;
             }
             // First quickly check whether the connection is alive
-            boolean valid = connection.isValid(3);// Check validity with a 3-seconds timeout
+            boolean valid = connection.isValid(3); // Check validity with a 3-seconds timeout
             if (!valid) {
                 LOG.info("Connection is invalid.");
                 return false;
