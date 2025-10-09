@@ -184,11 +184,7 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
                             e.getMessage());
                 }
                 try {
-                    // SQLRecoverableException is the super exception to CommunicationsException.
-                    if (e instanceof SQLRecoverableException
-                            || !connectionProvider.isConnectionValid()) {
-                        updateExecutor(true);
-                    }
+                    updateExecutor(!connectionProvider.isConnectionValid());
                 } catch (Exception exception) {
                     LOG.error("Attempt to update the JDBC statement executor failed.", exception);
                     throw new IOException("Unable to update JDBC statement executor", exception);
