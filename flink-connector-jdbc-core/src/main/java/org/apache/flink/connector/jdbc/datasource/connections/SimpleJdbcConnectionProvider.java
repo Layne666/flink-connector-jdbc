@@ -123,7 +123,6 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
             try (Statement statement = connection.createStatement()) {
                 statement.execute("SELECT 1");
             }
-            LOG.info("Connection is valid.");
             return true;
         } catch (Exception e) {
             LOG.error("Failed to validate connection, msg:{}", e.getMessage());
