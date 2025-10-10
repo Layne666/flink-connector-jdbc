@@ -99,19 +99,7 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
 
     @Override
     public Connection getConnection() {
-        try {
-            return getDataSource().getConnection();
-        } catch (Exception e) {
-            LOG.error(
-                    "Failed to get connection from HikariCP pool for key '{}'",
-                    this.connectionKey,
-                    e);
-            throw new RuntimeException(
-                    "Failed to get connection from HikariCP pool for key '"
-                            + this.connectionKey
-                            + "'",
-                    e);
-        }
+        return connection;
     }
 
     @Override
@@ -132,9 +120,9 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
                 return false;
             }
             // If the connection is alive, check whether it is usable
-            // try (Statement statement = connection.createStatement()) {
-            //     statement.execute("SELECT 1");
-            // }
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("SELECT 1");
+            }
             LOG.info("Connection is valid.");
             return true;
         } catch (Exception e) {
@@ -145,8 +133,48 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
 
     @Override
     public Connection getOrEstablishConnection() throws SQLException {
-        this.connection = getDataSource().getConnection();
-        return this.connection;
+        HikariDataSource ds = getDataSource();
+        int maxRetries = 5;
+        long baseSleepMs = 500;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            Connection conn = null;
+            try {
+                conn = ds.getConnection();
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.execute("SELECT 1");
+                }
+                // Successfully obtained and verified, return connection
+                this.connection = conn;
+                return conn;
+            } catch (Exception ex) {
+                LOG.warn("Attempt {} to get valid connection failed: {}", attempt, ex.getMessage());
+                if (attempt == maxRetries) {
+                    LOG.error(
+                            "Failed to get valid connection from HikariCP pool for key '{}' after {} attempts",
+                            this.connectionKey,
+                            maxRetries,
+                            ex);
+                    throw new RuntimeException(
+                            "Failed to get valid connection from HikariCP pool for key '"
+                                    + this.connectionKey
+                                    + "'",
+                            ex);
+                }
+                // Recycle abnormal connection
+                try {
+                    if (conn != null) {
+                        conn.close();
+                    }
+                } catch (Exception ignored) {
+                }
+                // Exponential backoff
+                try {
+                    Thread.sleep(baseSleepMs * attempt);
+                } catch (InterruptedException ignored) {
+                }
+            }
+        }
+        throw new RuntimeException("Unreachable code");
     }
 
     @Override
@@ -180,17 +208,17 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         config.setMaximumPoolSize(512); // Maximum number of connections
         config.setMinimumIdle(16); // Minimal idle connection
         config.setIdleTimeout(
-                300_000); // Idle connection timeout, in milliseconds (5 minutes) - much less than
+                180_000); // Idle connection timeout, in milliseconds (3 minutes) - much less than
         // wait_timeout, avoid using zombie connections
         config.setMaxLifetime(
-                480_000); // Maximum connection survival time in milliseconds (8 minutes) - less
+                300_000); // Maximum connection survival time in milliseconds (5 minutes) - less
         // than MySQL wait_timeout
         config.setConnectionTimeout(30_000); // Timeout to get connection (30 seconds)
 
         config.setConnectionTestQuery("SELECT 1"); // Queries for checksum and keep-alive are used
         config.setValidationTimeout(5_000); // Timeout for connection detection (5 seconds)
         config.setKeepaliveTime(
-                30_000); // Wake up idle connections every 30 seconds to prevent database
+                15_000); // Wake up idle connections every 15 seconds to prevent database
         // disconnection
 
         config.setPoolName("Flink-Hikari-Connection-Pool");

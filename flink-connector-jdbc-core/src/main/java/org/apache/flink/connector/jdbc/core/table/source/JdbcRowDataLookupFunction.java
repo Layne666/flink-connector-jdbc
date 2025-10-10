@@ -141,6 +141,17 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
     public Collection<RowData> lookup(RowData keyRow) {
         for (int retry = 0; retry <= maxRetryTimes; retry++) {
             try {
+                if (retry > 0 || !connectionProvider.isConnectionValid()) {
+                    statement.close();
+                    connectionProvider.closeConnection();
+                    establishConnectionAndStatement();
+                }
+            } catch (Exception exception) {
+                LOG.error(
+                        "JDBC connection is not valid, and reestablish connection failed",
+                        exception);
+            }
+            try {
                 statement.clearParameters();
                 statement = lookupKeyRowConverter.toExternal(keyRow, statement);
                 statement = setPredicateParams(statement);
@@ -163,25 +174,6 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
                             retry,
                             e.getMessage());
                 }
-
-                try {
-                    // SQLRecoverableException is the super exception to CommunicationsException.
-                    // if (e instanceof SQLRecoverableException
-                    //         || !connectionProvider.isConnectionValid()) {
-                    //     statement.close();
-                    //     connectionProvider.closeConnection();
-                    //     establishConnectionAndStatement();
-                    // }
-                    statement.close();
-                    connectionProvider.closeConnection();
-                    establishConnectionAndStatement();
-                } catch (Exception exception) {
-                    LOG.error(
-                            "JDBC connection is not valid, and reestablish connection failed",
-                            exception);
-                    throw new RuntimeException("Reestablish JDBC connection failed", exception);
-                }
-
                 try {
                     Thread.sleep(1000L * retry);
                 } catch (InterruptedException e1) {
