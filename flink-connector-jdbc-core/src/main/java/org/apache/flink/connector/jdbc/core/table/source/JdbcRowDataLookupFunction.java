@@ -41,7 +41,6 @@ import java.io.Serializable;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLRecoverableException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -167,12 +166,15 @@ public class JdbcRowDataLookupFunction extends LookupFunction {
 
                 try {
                     // SQLRecoverableException is the super exception to CommunicationsException.
-                    if (e instanceof SQLRecoverableException
-                            || !connectionProvider.isConnectionValid()) {
-                        statement.close();
-                        connectionProvider.closeConnection();
-                        establishConnectionAndStatement();
-                    }
+                    // if (e instanceof SQLRecoverableException
+                    //         || !connectionProvider.isConnectionValid()) {
+                    //     statement.close();
+                    //     connectionProvider.closeConnection();
+                    //     establishConnectionAndStatement();
+                    // }
+                    statement.close();
+                    connectionProvider.closeConnection();
+                    establishConnectionAndStatement();
                 } catch (Exception exception) {
                     LOG.error(
                             "JDBC connection is not valid, and reestablish connection failed",

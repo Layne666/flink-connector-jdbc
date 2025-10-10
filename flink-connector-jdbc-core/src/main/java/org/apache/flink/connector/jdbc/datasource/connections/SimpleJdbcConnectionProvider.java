@@ -132,9 +132,9 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
                 return false;
             }
             // If the connection is alive, check whether it is usable
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("SELECT 1");
-            }
+            // try (Statement statement = connection.createStatement()) {
+            //     statement.execute("SELECT 1");
+            // }
             LOG.info("Connection is valid.");
             return true;
         } catch (Exception e) {
@@ -177,13 +177,13 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         config.setPassword(password);
         config.setDriverClassName("com.mysql.cj.jdbc.Driver");
 
-        config.setMaximumPoolSize(1024); // Maximum number of connections
-        config.setMinimumIdle(20); // Minimal idle connection
+        config.setMaximumPoolSize(512); // Maximum number of connections
+        config.setMinimumIdle(16); // Minimal idle connection
         config.setIdleTimeout(
-                600_000); // Idle connection timeout, in milliseconds (10 minutes) - much less than
+                300_000); // Idle connection timeout, in milliseconds (5 minutes) - much less than
         // wait_timeout, avoid using zombie connections
         config.setMaxLifetime(
-                1800_000); // Maximum connection survival time in milliseconds (30 minutes) - less
+                480_000); // Maximum connection survival time in milliseconds (8 minutes) - less
         // than MySQL wait_timeout
         config.setConnectionTimeout(30_000); // Timeout to get connection (30 seconds)
 

@@ -183,7 +183,10 @@ public class JdbcOutputFormat<In, JdbcIn, JdbcExec extends JdbcBatchStatementExe
                             e.getMessage());
                 }
                 try {
-                    updateExecutor(!connectionProvider.isConnectionValid());
+                    // updateExecutor(!connectionProvider.isConnectionValid());
+                    jdbcStatementExecutor.closeStatements();
+                    jdbcStatementExecutor.prepareStatements(
+                            connectionProvider.reestablishConnection());
                 } catch (Exception exception) {
                     LOG.error("Attempt to update the JDBC statement executor failed.", exception);
                     throw new IOException("Unable to update JDBC statement executor", exception);
