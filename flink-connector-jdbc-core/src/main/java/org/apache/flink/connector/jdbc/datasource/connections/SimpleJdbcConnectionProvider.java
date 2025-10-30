@@ -28,7 +28,10 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.Serializable;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -60,20 +63,22 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
         DriverManager.getDrivers();
 
         // Add a single shutdown hook to cleanly close ALL connection pools when the JVM exits.
-        Runtime.getRuntime()
-                .addShutdownHook(
-                        new Thread(
-                                () -> {
-                                    synchronized (dataSourceMap) {
-                                        if (!dataSourceMap.isEmpty()) {
-                                            LOG.info(
-                                                    "Closing {} shared HikariCP DataSource(s) due to JVM shutdown...",
-                                                    dataSourceMap.size());
-                                            dataSourceMap.values().forEach(HikariDataSource::close);
-                                            dataSourceMap.clear();
-                                        }
-                                    }
-                                }));
+        // Runtime.getRuntime()
+        //         .addShutdownHook(
+        //                 new Thread(
+        //                         () -> {
+        //                             synchronized (dataSourceMap) {
+        //                                 if (!dataSourceMap.isEmpty()) {
+        //                                     LOG.info(
+        //                                             "Closing {} shared HikariCP DataSource(s) due
+        // to JVM shutdown...",
+        //                                             dataSourceMap.size());
+        //
+        // dataSourceMap.values().forEach(HikariDataSource::close);
+        //                                     dataSourceMap.clear();
+        //                                 }
+        //                             }
+        //                         }));
     }
 
     public SimpleJdbcConnectionProvider(JdbcConnectionOptions jdbcOptions) {
@@ -133,47 +138,18 @@ public class SimpleJdbcConnectionProvider implements JdbcConnectionProvider, Ser
     @Override
     public Connection getOrEstablishConnection() throws SQLException {
         HikariDataSource ds = getDataSource();
-        int maxRetries = 5;
-        long baseSleepMs = 500;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
-            Connection conn = null;
-            try {
-                conn = ds.getConnection();
-                try (Statement stmt = conn.createStatement()) {
-                    stmt.execute("SELECT 1");
-                }
-                // Successfully obtained and verified, return connection
-                this.connection = conn;
-                return conn;
-            } catch (Exception ex) {
-                LOG.warn("Attempt {} to get valid connection failed: {}", attempt, ex.getMessage());
-                if (attempt == maxRetries) {
-                    LOG.error(
-                            "Failed to get valid connection from HikariCP pool for key '{}' after {} attempts",
-                            this.connectionKey,
-                            maxRetries,
-                            ex);
-                    throw new RuntimeException(
-                            "Failed to get valid connection from HikariCP pool for key '"
-                                    + this.connectionKey
-                                    + "'",
-                            ex);
-                }
-                // Recycle abnormal connection
-                try {
-                    if (conn != null) {
-                        conn.close();
-                    }
-                } catch (Exception ignored) {
-                }
-                // Exponential backoff
-                try {
-                    Thread.sleep(baseSleepMs * attempt);
-                } catch (InterruptedException ignored) {
-                }
-            }
+        try {
+            Connection conn = ds.getConnection();
+            this.connection = conn;
+            return conn;
+        } catch (Exception ex) {
+            String finalErrorMsg =
+                    String.format(
+                            "Failed to get valid connection from HikariCP pool (after %dms timeout) for key '%s'. Error: %s",
+                            ds.getConnectionTimeout(), this.connectionKey, ex.getMessage());
+            LOG.error(finalErrorMsg);
+            throw new RuntimeException(finalErrorMsg);
         }
-        throw new RuntimeException("Unreachable code");
     }
 
     @Override
